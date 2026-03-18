@@ -47,7 +47,7 @@ pico_set_program_name(pico_usb_i2s_speaker "pico_usb_i2s_speaker")
 pico_set_program_version(pico_usb_i2s_speaker "0.1")
 
 # Modify the below lines to enable/disable output over UART/USB
-pico_enable_stdio_uart(pico_usb_i2s_speaker 1)
+pico_enable_stdio_uart(pico_usb_i2s_speaker 0)
 pico_enable_stdio_usb(pico_usb_i2s_speaker 0)
 
 # Add the standard library to the build
@@ -73,6 +73,24 @@ target_link_libraries(pico_usb_i2s_speaker
         tinyusb_board
         pico-i2s-pio
         )
+
+# Hardware workarounds
+pico_define_boot_stage2(slower_boot2 ${PICO_DEFAULT_BOOT_STAGE2_FILE})
+target_compile_definitions(pico_usb_i2s_speaker PRIVATE
+        # Startup delay to avoid issue with QSPI flash
+        PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64
+
+        # Performance, avoid calls to ____wrap___aeabi_lmul_veneer when doing 64bit multiplies
+        PICO_INT64_OPS_IN_RAM=1
+)
+target_compile_definitions(slower_boot2 PRIVATE
+        #MG - 7/30/2024
+        #System clock set to 295MHz by i2s lib: PICO_FLASH_SPI_CLKDIV=2 by default -> 147.5MHz clk is above 133MHz flash memory spec
+        #Drop QSPI clock to avoid errors when loading program from flash (295MHz / 4 = 73.75MHz)
+        # PICO_FLASH_SPI_CLKDIV=2 can still be used if voltage is raised to >=1.25V
+        PICO_FLASH_SPI_CLKDIV=4
+)
+pico_set_boot_stage2(pico_usb_i2s_speaker slower_boot2)
 
 pico_add_extra_outputs(pico_usb_i2s_speaker)
 

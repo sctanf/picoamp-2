@@ -37,6 +37,7 @@
 #include "pico/multicore.h"
 
 #include "i2s.h"
+#include "dsp/eq.h"
 
 //--------------------------------------------------------------------+
 // MACRO CONSTANT TYPEDEF PROTOTYPES
@@ -76,9 +77,10 @@ static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 // Current states
 uint8_t mute[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];   // +1 for master channel 0
 int16_t volume[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];// +1 for master channel 0
-uint32_t current_sample_rate = 44100;
+uint32_t current_sample_rate = 48000;
 const uint8_t resolutions_per_format[CFG_TUD_AUDIO_FUNC_1_N_FORMATS] = {CFG_TUD_AUDIO_FUNC_1_FORMAT_1_RESOLUTION_RX,
-                                                                        CFG_TUD_AUDIO_FUNC_1_FORMAT_2_RESOLUTION_RX};
+                                                                        CFG_TUD_AUDIO_FUNC_1_FORMAT_2_RESOLUTION_RX,
+                                                                        CFG_TUD_AUDIO_FUNC_1_FORMAT_3_RESOLUTION_RX};
 uint8_t current_resolution;
 
 // Buffer for speaker data
@@ -93,6 +95,8 @@ void core1_main(void);
 #define TUD_TASK_INTERVAL_US    250
 #define DEQUEUE_MAX_LEN   (CFG_TUD_AUDIO_FUNC_1_MAX_SAMPLE_RATE_FS / 2000 + 1)
 
+void bootsel_task(void);
+
 __isr bool __time_critical_func(tud_timer_callback)(__unused struct repeating_timer *t) {
   tud_task();
   audio_task();
@@ -105,7 +109,7 @@ int main(void) {
   board_init();
 
   // i2s初期化
-  i2s_mclk_set_pin(18, 20, 22);
+  i2s_mclk_set_pin(18, 16, 22);
   i2s_mclk_init(current_sample_rate);
   i2s_volume_change(0, 0);
 
@@ -234,6 +238,7 @@ static bool audio10_set_req_entity(tusb_control_request_t const *p_request, uint
             TU_VERIFY(p_request->wLength == 1);
 
             mute[channelNum] = pBuff[0];
+            audio_set_mute(pBuff[0], channelNum);
 
             TU_LOG2("    Set Mute: %d of channel: %u\r\n", mute[channelNum], channelNum);
             return true;
@@ -250,6 +255,7 @@ static bool audio10_set_req_entity(tusb_control_request_t const *p_request, uint
 
             volume[channelNum] = (int16_t)tu_unaligned_read16(pBuff) / 256;
             i2s_volume_change((int16_t)tu_unaligned_read16(pBuff), channelNum);
+            audio_set_volume((int16_t)tu_unaligned_read16(pBuff), channelNum);
 
             TU_LOG2("    Set Volume: %d dB of channel: %u\r\n", volume[channelNum], channelNum);
             return true;
@@ -337,7 +343,7 @@ static bool audio10_get_req_entity(uint8_t rhport, tusb_control_request_t const 
 
 #if TUD_OPT_HIGH_SPEED
 // List of supported sample rates for UAC2
-const uint32_t sample_rates[] = {44100, 48000, 88200, 96000};
+const uint32_t sample_rates[] = {48000};
 
 #define N_SAMPLE_RATES TU_ARRAY_SIZE(sample_rates)
 
@@ -588,13 +594,7 @@ void audio_task(void) {
   static uint32_t start_ms = 0;
 
   if (spk_data_size) {
-    static int32_t uac_buf_l[I2S_QUEUE_MAX];
-    static int32_t uac_buf_r[I2S_QUEUE_MAX];
-
-    // i2sキューに積む
-    int rx_length = i2s_unpack_uacdata(spk_buf, spk_data_size, current_resolution, uac_buf_l, uac_buf_r);
-    i2s_volume(uac_buf_l, uac_buf_r, rx_length);
-    i2s_enqueue(uac_buf_l, uac_buf_r, rx_length);
+    eq_process(spk_buf, spk_data_size, current_resolution);
     spk_data_size = 0;
 
     // フィードバックは1msに1回
