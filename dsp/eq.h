@@ -188,7 +188,7 @@ static void __not_in_flash_func(eq_process)(uint8_t* buffer, int sample, uint8_t
             current_vol_l = (mute_l ? 0 : vol_mul_l);
         if (current_vol_r - VOL_STEP > (mute_r ? 0 : vol_mul_r))
             current_vol_r -= VOL_STEP;
-        else if (current_vol_l < (mute_r ? 0 : vol_mul_r) - VOL_STEP)
+        else if (current_vol_r < (mute_r ? 0 : vol_mul_r) - VOL_STEP)
             current_vol_r += VOL_STEP;
         else
             current_vol_r = (mute_r ? 0 : vol_mul_r);
@@ -259,17 +259,24 @@ static void __not_in_flash_func(eq_process)(uint8_t* buffer, int sample, uint8_t
 #else
 #define LIMIT_MAX ((1 << 30) - 1)
 #endif
-    dspfx limit_max = ((1 << 30) - 1);
+// Largest magnitude that still fits int32 after the final << HEADROOM.
+#define LIMIT_CEIL ((1 << 30) - 1)
+    dspfx limit_max = LIMIT_CEIL;
     dspfx limit_min;
     for (int i = 0; i < count; i++) {
         if (LIMIT_MAX > 0) {
             limit_max = volume_mul[i] > LIMIT_MAX ? volume_mul[i] : LIMIT_MAX;
         }
-        limit_min = -LIMIT_MAX - 1;
-        if (buf0[i*2] > limit_max)
-            buf0[i*2] = limit_max;
-        if (buf0[i*2+1] < limit_min)
-            buf0[i*2+1] = limit_min;
+        if (limit_max > LIMIT_CEIL)
+            limit_max = LIMIT_CEIL;
+        limit_min = -limit_max - 1;
+        // Clamp both channels on both sides; an unclamped sample wraps on the shift below.
+        for (int c = 0; c < 2; c++) {
+            if (buf0[i*2+c] > limit_max)
+                buf0[i*2+c] = limit_max;
+            else if (buf0[i*2+c] < limit_min)
+                buf0[i*2+c] = limit_min;
+        }
     }
 #endif
 
